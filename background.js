@@ -19,6 +19,9 @@ class BackgroundService {
       } else if (details.reason === "update") {
         this.handleUpdate(details.previousVersion);
       }
+
+      // Add context menu for translating selection
+      this.updateContextMenuTitle();
     });
 
     // Handle messages from content scripts or popup
@@ -53,20 +56,32 @@ class BackgroundService {
           this.handleDeepSeekTranslate(request, sendResponse);
           return true;
 
+        case "openaiTranslate":
+          this.handleOpenAITranslate(request, sendResponse);
+          return true;
+
+        case "updateContextMenuLanguage":
+          this.updateContextMenuTitle();
+          return true;
+
         default:
           sendResponse({ success: false, error: "Unknown action" });
       }
     });
 
-    // Handle tab updates to inject content script if needed
-    chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-      if (changeInfo.status === "complete" && tab.url) {
-        if (
-          tab.url.includes("prismic.io") ||
-          tab.url.includes("prismicio.com")
-        ) {
-          this.ensureContentScriptInjected(tabId);
-        }
+    // Handle context menu clicks
+    chrome.contextMenus.onClicked.addListener((info, tab) => {
+      if (info.menuItemId === "prismic-translate-selection" && tab.id) {
+        chrome.tabs.sendMessage(tab.id, {
+          action: "translateSelectionContextMenu",
+        });
+      }
+    });
+
+    // Listen for the open-popup command and open the extension popup
+    chrome.commands.onCommand.addListener((command) => {
+      if (command === "open-popup") {
+        chrome.action.openPopup();
       }
     });
   }
@@ -123,25 +138,6 @@ class BackgroundService {
         message:
           "Click the extension icon when viewing a Prismic document to start translating.",
       });
-    }
-  }
-
-  async ensureContentScriptInjected(tabId) {
-    try {
-      // Check if content script is already injected
-      const response = await chrome.tabs.sendMessage(tabId, { action: "ping" });
-      console.log("Content script already active:", response);
-    } catch (error) {
-      // Content script not injected, inject it
-      try {
-        await chrome.scripting.executeScript({
-          target: { tabId: tabId },
-          files: ["content.js"],
-        });
-        console.log("Content script injected into tab:", tabId);
-      } catch (injectionError) {
-        console.error("Failed to inject content script:", injectionError);
-      }
     }
   }
 
@@ -254,18 +250,15 @@ class BackgroundService {
   }
 
   async handleDeepSeekTranslate(request, sendResponse) {
-    const { text, sourceLanguage, targetLanguage, apiKey } = request;
+    const {
+      text,
+      sourceLanguage,
+      targetLanguage,
+      apiKey,
+      context: userContext,
+    } = request;
     try {
-      let context =
-        "We are translating website marketing pages for a NetSuite Cloud ERP consultancy. Provide ONLY the final translation with NO explanatory notes or annotations.";
-      // Add special context for Traditional Chinese (Hong Kong)
-      if (
-        targetLanguage.toLowerCase() === "zh-hk" ||
-        targetLanguage.toLowerCase() === "zh-hant"
-      ) {
-        context +=
-          " Provide clean Traditional Chinese translations optimized for Hong Kong business audiences, delivering only the final output without any annotations. Preserve all NetSuite module names in their original English forms (Advanced Inventory, Order Management, Demand Planning) as proper nouns, while localizing all other content according to Hong Kong conventions. Use industry-standard terms like '端到端可視性' (end-to-end visibility) and culturally appropriate expressions such as '骨幹' for platform and '各自為政' for siloed systems. Maintain a professional yet natural tone with Cantonese influences (using particles like '嘅' and '我哋' where appropriate), keeping proper nouns like NetSuite untranslated. Apply these rules automatically without commentary, focusing on fluent, technical translations that match Hong Kong's bilingual business environment.";
-      }
+      let context = userContext && userContext.trim() ? userContext.trim() : "";
       const response = await fetch(
         "https://api.deepseek.com/v1/chat/completions",
         {
@@ -309,6 +302,114 @@ class BackgroundService {
         success: false,
         error: "DeepSeek translation failed: " + error.message,
       });
+    }
+  }
+
+  async handleOpenAITranslate(request, sendResponse) {
+    const {
+      text,
+      sourceLanguage,
+      targetLanguage,
+      apiKey,
+      context: userContext,
+    } = request;
+    try {
+      let context = userContext && userContext.trim() ? userContext.trim() : "";
+      let systemPrompt =
+        context +
+        ` You are a translation engine. Translate the following text from ${sourceLanguage} to ${targetLanguage}, preserving all HTML tags and formatting.`;
+      const response = await fetch(
+        "https://api.openai.com/v1/chat/completions",
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: "gpt-3.5-turbo",
+            messages: [
+              { role: "system", content: systemPrompt },
+              { role: "user", content: text },
+            ],
+            temperature: 0.2,
+            max_tokens: 2048,
+          }),
+        }
+      );
+      if (!response.ok) {
+        sendResponse({
+          success: false,
+          error: `OpenAI API error: ${response.status}`,
+        });
+        return;
+      }
+      const data = await response.json();
+      if (
+        data.choices &&
+        data.choices[0] &&
+        data.choices[0].message &&
+        data.choices[0].message.content
+      ) {
+        sendResponse({ success: true, text: data.choices[0].message.content });
+        return;
+      }
+      sendResponse({ success: false, error: "Invalid response from OpenAI" });
+    } catch (error) {
+      sendResponse({
+        success: false,
+        error: "OpenAI translation failed: " + error.message,
+      });
+    }
+  }
+
+  updateContextMenuTitle() {
+    chrome.storage.sync.get(
+      ["targetLanguage", "translationService"],
+      (result) => {
+        const lang = result.targetLanguage || "hk";
+        const langLabel = this.getLanguageLabel(lang);
+        const model = result.translationService || "openai";
+        let modelLabel = "OpenAI";
+        if (model === "deepseek") modelLabel = "DeepSeek";
+        // Add more model labels if needed
+        chrome.contextMenus.removeAll(() => {
+          chrome.contextMenus.create({
+            id: "prismic-translate-selection",
+            title: `Translate Selection to ${langLabel} with ${modelLabel}`,
+            contexts: ["selection"],
+          });
+        });
+      }
+    );
+  }
+
+  getLanguageLabel(code) {
+    switch (code) {
+      case "hk":
+        return "Chinese (Traditional)";
+      case "zh":
+        return "Chinese (Simplified)";
+      case "en":
+        return "English";
+      case "fr":
+        return "French";
+      case "de":
+        return "German";
+      case "es":
+        return "Spanish";
+      case "ja":
+        return "Japanese";
+      case "ko":
+        return "Korean";
+      case "ru":
+        return "Russian";
+      case "pt":
+        return "Portuguese";
+      case "it":
+        return "Italian";
+      default:
+        return code;
     }
   }
 }

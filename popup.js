@@ -12,11 +12,9 @@ class PopupController {
       progressFill: document.getElementById("progressFill"),
       btnText: document.querySelector(".btn-text"),
       btnLoading: document.querySelector(".btn-loading"),
-      translateRichText: document.getElementById("translateRichText"),
-      translateTitles: document.getElementById("translateTitles"),
-      translateAltText: document.getElementById("translateAltText"),
-      preserveFormatting: document.getElementById("preserveFormatting"),
+      context: document.getElementById("context"),
       cancelButton: document.getElementById("cancelButton"),
+      saveContextButton: document.getElementById("saveContextButton"),
     };
 
     this.init();
@@ -26,11 +24,18 @@ class PopupController {
     await this.loadSettings();
     this.bindEvents();
     await this.checkPrismicPage();
+    this.updateTranslateButtonText();
+    // Set focus to the Translate Document button for quick Enter access
+    this.elements.translateButton.focus();
   }
 
   bindEvents() {
     this.elements.translationService.addEventListener("change", () => {
       this.handleServiceChange();
+      // Save the selected service (but not the API key value)
+      chrome.storage.sync.set({
+        translationService: this.elements.translationService.value,
+      });
     });
 
     this.elements.translateButton.addEventListener("click", () => {
@@ -46,32 +51,47 @@ class PopupController {
       this.elements.cancelButton.disabled = true;
     });
 
-    // Save settings on change
+    // Save settings on change for language and context fields only
     [
       this.elements.sourceLanguage,
       this.elements.targetLanguage,
-      this.elements.translationService,
-      this.elements.apiKey,
-      this.elements.translateRichText,
-      this.elements.translateTitles,
-      this.elements.translateAltText,
-      this.elements.preserveFormatting,
+      this.elements.context,
     ].forEach((element) => {
       element.addEventListener("change", () => {
         this.saveSettings();
       });
     });
+
+    // Save API key only when the API key field changes
+    this.elements.apiKey.addEventListener("change", () => {
+      const service = this.elements.translationService.value;
+      const keyName = `apiKey_${service}`;
+      chrome.storage.sync.set({ [keyName]: this.elements.apiKey.value });
+    });
+
+    this.elements.targetLanguage.addEventListener("change", () => {
+      this.saveSettings();
+      chrome.runtime.sendMessage({ action: "updateContextMenuLanguage" });
+    });
+
+    this.elements.saveContextButton.addEventListener("click", () => {
+      this.saveContext();
+    });
   }
 
   handleServiceChange() {
     const service = this.elements.translationService.value;
-    const needsApiKey = service !== "google";
-    this.elements.apiKeyGroup.style.display = needsApiKey ? "block" : "none";
-    if (needsApiKey) {
-      this.elements.apiKey.required = true;
+    const keyName = `apiKey_${service}`;
+    // Show API key field for OpenAI and DeepSeek
+    if (service === "openai" || service === "deepseek") {
+      this.elements.apiKeyGroup.style.display = "block";
     } else {
-      this.elements.apiKey.required = false;
+      this.elements.apiKeyGroup.style.display = "none";
     }
+    // Always load the correct API key for the selected service
+    chrome.storage.sync.get([keyName], (result) => {
+      this.elements.apiKey.value = result[keyName] || "";
+    });
   }
 
   async handleTranslate() {
@@ -94,6 +114,7 @@ class PopupController {
       const response = await chrome.tabs.sendMessage(tab.id, {
         action: "translate",
         settings: settings,
+        forceFullDocument: true,
       });
 
       if (response.success) {
@@ -143,11 +164,9 @@ class PopupController {
       targetLanguage: this.elements.targetLanguage.value,
       translationService: this.elements.translationService.value,
       apiKey: this.elements.apiKey.value,
+      context: this.elements.context.value,
       options: {
-        translateRichText: this.elements.translateRichText.checked,
-        translateTitles: this.elements.translateTitles.checked,
-        translateAltText: this.elements.translateAltText.checked,
-        preserveFormatting: this.elements.preserveFormatting.checked,
+        preserveFormatting: true,
       },
     };
   }
@@ -210,8 +229,7 @@ class PopupController {
       try {
         await chrome.tabs.sendMessage(tab.id, { action: "ping" });
       } catch (error) {
-        this.showStatus("Loading Prismic page detector...", "info");
-        // Content script might not be ready yet
+        // Do not show status here; just retry silently
         setTimeout(() => this.checkPrismicPage(), 1000);
       }
     } catch (error) {
@@ -225,11 +243,9 @@ class PopupController {
         "sourceLanguage",
         "targetLanguage",
         "translationService",
-        "apiKey",
-        "translateRichText",
-        "translateTitles",
-        "translateAltText",
-        "preserveFormatting",
+        "apiKey_openai",
+        "apiKey_deepseek",
+        "translationContext",
       ]);
 
       if (result.sourceLanguage) {
@@ -242,18 +258,14 @@ class PopupController {
         this.elements.translationService.value = result.translationService;
         this.handleServiceChange();
       }
-      if (result.apiKey) {
-        this.elements.apiKey.value = result.apiKey;
+      const service = this.elements.translationService.value;
+      const keyName = `apiKey_${service}`;
+      if (result[keyName]) {
+        this.elements.apiKey.value = result[keyName];
       }
-
-      // Load checkbox settings
-      this.elements.translateRichText.checked =
-        result.translateRichText !== false;
-      this.elements.translateTitles.checked = result.translateTitles !== false;
-      this.elements.translateAltText.checked =
-        result.translateAltText !== false;
-      this.elements.preserveFormatting.checked =
-        result.preserveFormatting !== false;
+      if (result.translationContext) {
+        this.elements.context.value = result.translationContext;
+      }
     } catch (error) {
       console.error("Error loading settings:", error);
     }
@@ -261,18 +273,49 @@ class PopupController {
 
   async saveSettings() {
     try {
+      const service = this.elements.translationService.value;
+      const keyName = `apiKey_${service}`;
       await chrome.storage.sync.set({
         sourceLanguage: this.elements.sourceLanguage.value,
         targetLanguage: this.elements.targetLanguage.value,
         translationService: this.elements.translationService.value,
-        apiKey: this.elements.apiKey.value,
-        translateRichText: this.elements.translateRichText.checked,
-        translateTitles: this.elements.translateTitles.checked,
-        translateAltText: this.elements.translateAltText.checked,
-        preserveFormatting: this.elements.preserveFormatting.checked,
+        [keyName]: this.elements.apiKey.value,
+        translationContext: this.elements.context.value,
       });
     } catch (error) {
       console.error("Error saving settings:", error);
+    }
+  }
+
+  async updateTranslateButtonText() {
+    // Check if there is selected text in the active tab
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (tabs[0]) {
+        chrome.tabs.sendMessage(
+          tabs[0].id,
+          { action: "checkSelection" },
+          (response) => {
+            const hasSelection = response && response.hasSelection;
+            const btnText = document.querySelector(".btn-text");
+            if (btnText) {
+              btnText.textContent = hasSelection
+                ? "Translate Selected"
+                : "Translate Document";
+            }
+          }
+        );
+      }
+    });
+  }
+
+  async saveContext() {
+    try {
+      await chrome.storage.sync.set({
+        translationContext: this.elements.context.value,
+      });
+      this.showStatus("Context saved!", "success");
+    } catch (error) {
+      this.showStatus("Failed to save context.", "error");
     }
   }
 }
@@ -280,4 +323,20 @@ class PopupController {
 // Initialize popup when DOM is loaded
 document.addEventListener("DOMContentLoaded", () => {
   new PopupController();
+});
+
+// Listen for progress updates from the content script
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request.action === "translationProgress") {
+    const progressFill = document.getElementById("progressFill");
+    if (progressFill) {
+      progressFill.style.width = `${request.percent}%`;
+    }
+  }
+  if (request.action === "translationStatus") {
+    const statusText = document.getElementById("statusText");
+    if (statusText) {
+      statusText.textContent = request.text;
+    }
+  }
 });

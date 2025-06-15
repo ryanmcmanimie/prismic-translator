@@ -1,13 +1,15 @@
 {
   "manifest_version": 3,
   "name": "Prismic Document Translator",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Translate Prismic document fields directly in the browser",
-  "permissions": ["activeTab", "storage"],
+  "permissions": ["activeTab", "storage", "contextMenus"],
   "host_permissions": [
     "https://*.prismic.io/*",
     "https://*.prismicio.com/*",
-    "https://api-free.deepl.com/*"
+    "https://api-free.deepl.com/*",
+    "https://api.openai.com/*",
+    "https://api.deepseek.com/*"
   ],
   "action": {
     "default_popup": "popup.html",
@@ -22,5 +24,14 @@
   ],
   "background": {
     "service_worker": "background.js"
+  },
+  "commands": {
+    "open-popup": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+X",
+        "mac": "Command+Shift+X"
+      },
+      "description": "Open Prismic Translator popup"
+    }
   }
 }

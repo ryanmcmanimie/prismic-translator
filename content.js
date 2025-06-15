@@ -45,9 +45,7 @@
         ja: "ja-jp",
         ko: "ko-kr",
         zh: "zh-cn", // Simplified Chinese
-        "zh-Hant": "zh-hk", // Traditional Chinese
-        "zh-hk": "zh-hk",
-        "zh-cn": "zh-cn",
+        hk: "zh-hk", // Traditional Chinese
       };
 
       this.init();
@@ -68,7 +66,10 @@
             break;
 
           case "translate":
-            this.handleTranslateRequest(request.settings)
+            this.handleTranslateRequest(
+              request.settings,
+              request.forceFullDocument
+            )
               .then((result) => sendResponse(result))
               .catch((error) =>
                 sendResponse({ success: false, error: error.message })
@@ -86,6 +87,76 @@
           case "cancelTranslation":
             this.cancelTranslation();
             sendResponse({ success: true });
+            break;
+
+          case "translateSelectionContextMenu":
+            console.log("[Prismic Translator] Context menu action received");
+            // Use the last used settings if available, or default settings
+            const lastSettings = window.prismicTranslatorLastSettings || {
+              sourceLanguage: "en",
+              targetLanguage: "hk",
+              translationService: "openai",
+              options: {
+                translateRichText: true,
+                translateTitles: true,
+                translateAltText: true,
+                preserveFormatting: true,
+              },
+            };
+            const keyName = `apiKey_${lastSettings.translationService}`;
+            chrome.storage.sync.get([keyName], (result) => {
+              const apiKey = result[keyName] || "";
+              const settings = { ...lastSettings, apiKey };
+              window.prismicTranslatorInstance =
+                window.prismicTranslatorInstance || new PrismicTranslator();
+              // Log the current selection
+              const selection = window.getSelection();
+              if (
+                selection &&
+                selection.rangeCount &&
+                selection.toString().trim().length > 0
+              ) {
+                const container = document.createElement("div");
+                for (let i = 0; i < selection.rangeCount; i++) {
+                  container.appendChild(
+                    selection.getRangeAt(i).cloneContents()
+                  );
+                }
+                const selectedHtml = container.innerHTML;
+                console.log(
+                  "[Prismic Translator] Selected HTML for context menu translation:",
+                  selectedHtml
+                );
+              } else {
+                console.log(
+                  "[Prismic Translator] No selection found for context menu translation."
+                );
+              }
+              Promise.resolve(
+                window.prismicTranslatorInstance.handleTranslateRequest(
+                  settings
+                )
+              )
+                .then((result) => {
+                  console.log(
+                    "[Prismic Translator] Context menu translation result:",
+                    result
+                  );
+                })
+                .catch((error) => {
+                  console.error(
+                    "[Prismic Translator] Context menu translation error:",
+                    error
+                  );
+                });
+            });
+            break;
+
+          case "checkSelection":
+            const selection = window.getSelection();
+            sendResponse({
+              hasSelection: selection && selection.toString().trim().length > 0,
+            });
             break;
 
           default:
@@ -155,14 +226,138 @@
       return batches;
     }
 
-    async handleTranslateRequest(settings) {
+    async handleTranslateRequest(settings, forceFullDocument = false) {
+      // Always ensure options exists and has preserveFormatting
+      if (!settings.options) {
+        settings.options = { preserveFormatting: true };
+      } else if (typeof settings.options.preserveFormatting === "undefined") {
+        settings.options.preserveFormatting = true;
+      }
+      // Always initialize translationService
+      this.translationService = new TranslationService(settings);
+      this.translationContext = settings.context || "";
+      // Only translate selection if NOT forced (i.e., context menu)
+      if (!forceFullDocument) {
+        if (window.__prismicTranslatorSelectionInProgress) return;
+        window.__prismicTranslatorSelectionInProgress = true;
+        const selection = window.getSelection();
+        let originalRange = null;
+        if (
+          selection &&
+          selection.rangeCount &&
+          selection.toString().trim().length > 0
+        ) {
+          originalRange = selection.getRangeAt(0).cloneRange();
+          const anchorNode = selection.anchorNode;
+          // Check if selection is inside a textarea or input
+          const textarea =
+            anchorNode && anchorNode.nodeType === 3
+              ? anchorNode.parentElement.closest('textarea, input[type="text"]')
+              : null;
+
+          if (textarea) {
+            // Handle textarea/input selection
+            const start = textarea.selectionStart;
+            const end = textarea.selectionEnd;
+            const originalText = textarea.value.substring(start, end);
+            try {
+              const translatedText = await this.translationService.translate(
+                originalText,
+                settings.sourceLanguage,
+                settings.targetLanguage,
+                this.translationContext
+              );
+              textarea.setRangeText(translatedText, start, end, "end");
+              textarea.dispatchEvent(new Event("input", { bubbles: true }));
+              textarea.dispatchEvent(new Event("change", { bubbles: true }));
+              window.__prismicTranslatorSelectionInProgress = false;
+              return {
+                success: true,
+                fieldsTranslated: 1,
+                totalFields: 1,
+                errors: [],
+              };
+            } catch (error) {
+              window.__prismicTranslatorSelectionInProgress = false;
+              return { success: false, error: error.message };
+            }
+          } else {
+            // Get the selected HTML
+            const container = document.createElement("div");
+            for (let i = 0; i < selection.rangeCount; i++) {
+              container.appendChild(selection.getRangeAt(i).cloneContents());
+            }
+            const selectedHtml = container.innerHTML;
+            try {
+              const translatedHtml = await this.translationService.translate(
+                selectedHtml,
+                settings.sourceLanguage,
+                settings.targetLanguage,
+                this.translationContext
+              );
+              // Helper to check if range is still in the document
+              function isRangeInDocument(range) {
+                let container = range.commonAncestorContainer;
+                while (container) {
+                  if (container === document.body) return true;
+                  container = container.parentNode;
+                }
+                return false;
+              }
+              // Restore the original selection and replace content if valid
+              if (originalRange && isRangeInDocument(originalRange)) {
+                const sel = window.getSelection();
+                sel.removeAllRanges();
+                sel.addRange(originalRange);
+                originalRange.deleteContents();
+                // Ensure i18n prefixes are updated in the translated HTML
+                const fixedHtml = this.replaceAllI18nPrefixes(translatedHtml);
+                const fragment =
+                  originalRange.createContextualFragment(fixedHtml);
+                originalRange.insertNode(fragment);
+                // Clean up empty blocks in the parent container
+                this.cleanupEmptyBlocks(
+                  (originalRange.commonAncestorContainer.nodeType === 1
+                    ? originalRange.commonAncestorContainer
+                    : originalRange.commonAncestorContainer.parentElement) ||
+                    document.body
+                );
+              }
+              window.__prismicTranslatorSelectionInProgress = false;
+              return {
+                success: true,
+                fieldsTranslated: 1,
+                totalFields: 1,
+                errors: [],
+              };
+            } catch (error) {
+              window.__prismicTranslatorSelectionInProgress = false;
+              return { success: false, error: error.message };
+            }
+          }
+        }
+        window.__prismicTranslatorSelectionInProgress = false;
+      }
       try {
         console.log("Starting translation with settings:", settings);
 
-        this.translationService = new TranslationService(settings);
-        const fields = this.findTranslatableFields();
-        console.log("Translatable fields found:", fields.length, fields);
         this.translationCancelled = false;
+
+        // Gradually scroll down the page to trigger lazy loading
+        let scrollStep = window.innerHeight / 4; // Scroll by a quarter of the viewport at a time (slower)
+        let currentY = 0;
+        let maxScroll = document.body.scrollHeight;
+        let attempts = 0;
+        while (currentY < maxScroll && attempts < 30) {
+          window.scrollTo(0, currentY);
+          await new Promise((resolve) => setTimeout(resolve, 600)); // Wait 600ms between scrolls (slower)
+          currentY += scrollStep;
+          maxScroll = document.body.scrollHeight; // Update in case page grows
+          attempts++;
+        }
+        // Final scroll to bottom and wait
+        window.scrollTo(0, document.body.scrollHeight);
+        await new Promise((resolve) => setTimeout(resolve, 2000));
 
         // Log the number of alt text fields found by placeholder
         const altTextFields = document.querySelectorAll(
@@ -172,6 +367,11 @@
           `[Prismic Translator] Alt text fields found by placeholder: ${altTextFields.length}`,
           altTextFields
         );
+
+        const fields = this.findTranslatableFields({
+          skipRichtextWithImageNodeView: forceFullDocument,
+        });
+        console.log("Translatable fields found:", fields.length, fields);
 
         if (fields.length === 0) {
           return {
@@ -196,6 +396,16 @@
             const originalText = this.getFieldText(field);
 
             if (!originalText || originalText.trim().length === 0) {
+              // Still update progress for skipped fields
+              const percent = Math.round(((i + 1) / fields.length) * 100);
+              chrome.runtime.sendMessage({
+                action: "translationProgress",
+                percent,
+              });
+              chrome.runtime.sendMessage({
+                action: "translationStatus",
+                text: `Translating ${i + 1}/${fields.length} elements...`,
+              });
               continue;
             }
 
@@ -207,7 +417,8 @@
             const translatedText = await this.translationService.translate(
               originalText,
               settings.sourceLanguage,
-              settings.targetLanguage
+              settings.targetLanguage,
+              this.translationContext
             );
 
             if (translatedText && translatedText !== originalText) {
@@ -220,6 +431,13 @@
 
               // Add visual feedback
               this.highlightField(field, "success");
+            } else {
+              // Even if not translated, still update i18n prefix if needed
+              this.setFieldText(
+                field,
+                originalText,
+                settings.options.preserveFormatting
+              );
             }
 
             // Small delay to avoid overwhelming the API
@@ -229,6 +447,16 @@
             errors.push(`Field ${i + 1}: ${error.message}`);
             this.highlightField(field, "error");
           }
+          // Send progress update after each field
+          const percent = Math.round(((i + 1) / fields.length) * 100);
+          chrome.runtime.sendMessage({
+            action: "translationProgress",
+            percent,
+          });
+          chrome.runtime.sendMessage({
+            action: "translationStatus",
+            text: `Translating ${i + 1}/${fields.length} elements...`,
+          });
         }
 
         const result = {
@@ -241,6 +469,9 @@
         if (errors.length > 0) {
           result.warning = `${errors.length} fields failed to translate`;
         }
+
+        // Save last used settings for context menu reuse
+        window.prismicTranslatorLastSettings = settings;
 
         return result;
       } catch (error) {
@@ -283,7 +514,7 @@
       }
     }
 
-    findTranslatableFields() {
+    findTranslatableFields({ skipRichtextWithImageNodeView } = {}) {
       let fields = [];
       // Select all matching fields, including those in groups and all alt text fields
       const selectors = [
@@ -358,7 +589,23 @@
           skipped,
         });
       });
-      fields = fields.filter((el) => !this.shouldSkipField(el));
+      fields = fields.filter((el) => {
+        if (this.shouldSkipField(el)) return false;
+        if (
+          skipRichtextWithImageNodeView &&
+          this.getFieldType(el) === "richtext" &&
+          el.querySelector &&
+          (el.querySelector(".imageViewNodeWrapper") ||
+            el.querySelector(".react-renderer.node-embed"))
+        ) {
+          console.log(
+            "[Prismic Translator] Skipping richtext field with imageViewNodeWrapper or react-renderer node-embed",
+            el
+          );
+          return false;
+        }
+        return true;
+      });
       return fields;
     }
 
@@ -453,19 +700,6 @@
         );
         return true;
       }
-      // Skip URL/link fields
-      if (
-        id.includes("link") ||
-        id.includes("url") ||
-        label.includes("link") ||
-        label.includes("url") ||
-        placeholder.toLowerCase().includes("http") ||
-        (value.startsWith("http") && !isGroupField) ||
-        (value.startsWith("/") && !isGroupField)
-      ) {
-        return true;
-      }
-
       // Skip email fields
       if (
         element.type === "email" ||
@@ -490,6 +724,15 @@
         value.match(/^[a-zA-Z0-9_-]+$/) &&
         value.length < 20 &&
         !isGroupField
+      ) {
+        return true;
+      }
+
+      // Skip fields where the label is exactly 'name'
+      if (
+        label.trim() === "name" ||
+        labelText.trim() === "name" ||
+        placeholder.trim() === "name"
       ) {
         return true;
       }
@@ -596,36 +839,108 @@
       // Always update i18n URL prefixes for any content
       text = this.replaceAllI18nPrefixes(text);
       if (element.contentEditable === "true") {
-        // For rich text, always use innerHTML and do not strip tags
-        element.innerHTML = text;
-        element.dispatchEvent(new Event("input", { bubbles: true }));
-        element.dispatchEvent(new Event("change", { bubbles: true }));
-      } else {
-        // If this is a URL field (starts with /xx-xx/), do NOT skip, just update the prefix
-        if (element.value && element.value.match(/^\/[a-z]{2}-[a-z]{2}\//i)) {
-          // Only update the prefix, do not translate
-          element.value = this.replaceAllI18nPrefixes(element.value);
+        // For rich text, preserve inline images and only translate their alt text
+        const { htmlWithPlaceholders, images } =
+          this.extractImagesAndReplaceWithPlaceholders(element.innerHTML);
+        // If there are images, handle alt text translation separately
+        if (images.length > 0) {
+          // Translate alt text for each image
+          const altPromises = images.map((img) => {
+            // Only translate if alt text is non-empty
+            if (img.alt && img.alt.trim().length > 0) {
+              return this.translationService.translate(
+                img.alt,
+                this.translationService.settings.sourceLanguage,
+                this.translationService.settings.targetLanguage
+              );
+            } else {
+              return Promise.resolve("");
+            }
+          });
+          Promise.all(altPromises).then((translatedAlts) => {
+            // Restore images with translated alt text
+            const finalHTML = this.restoreImagesWithTranslatedAlt(
+              text,
+              images,
+              translatedAlts
+            );
+            element.innerHTML = finalHTML;
+            element.dispatchEvent(new Event("input", { bubbles: true }));
+            element.dispatchEvent(new Event("change", { bubbles: true }));
+          });
         } else {
-          element.value = text;
+          // No images, just set the translated HTML
+          element.innerHTML = text;
+          element.dispatchEvent(new Event("input", { bubbles: true }));
+          element.dispatchEvent(new Event("change", { bubbles: true }));
         }
+      } else if (element.value !== undefined) {
+        // Always update i18n prefix for any text field
+        let newValue = this.replaceAllI18nPrefixes(text);
+        element.value = newValue;
         element.dispatchEvent(new Event("input", { bubbles: true }));
         element.dispatchEvent(new Event("change", { bubbles: true }));
       }
     }
 
+    // Helper: Extract images and replace with placeholders
+    extractImagesAndReplaceWithPlaceholders(html) {
+      const tempDiv = document.createElement("div");
+      tempDiv.innerHTML = html;
+      const images = [];
+      let imageIndex = 0;
+      tempDiv.querySelectorAll("img").forEach((img) => {
+        const placeholder = `[[IMAGE_${imageIndex}]]`;
+        images.push({
+          html: img.outerHTML,
+          alt: img.alt,
+          index: imageIndex,
+        });
+        // Replace img with placeholder
+        const span = document.createElement("span");
+        span.textContent = placeholder;
+        img.replaceWith(span);
+        imageIndex++;
+      });
+      return {
+        htmlWithPlaceholders: tempDiv.innerHTML,
+        images,
+      };
+    }
+
+    // Helper: Restore images with translated alt text
+    restoreImagesWithTranslatedAlt(html, images, translatedAlts) {
+      let result = html;
+      images.forEach((img, i) => {
+        // Replace alt text in the original image HTML
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(img.html, "text/html");
+        const imgTag = doc.querySelector("img");
+        if (imgTag) imgTag.alt = translatedAlts[i];
+        const newImgHtml = imgTag ? imgTag.outerHTML : img.html;
+        result = result.replace(`[[IMAGE_${img.index}]]`, newImgHtml);
+      });
+      return result;
+    }
+
     replaceAllI18nPrefixes(text) {
-      // Replace all /en-us/, /fr-fr/, etc. with the correct code for the target language
-      const targetLang =
+      // Replace all /xx-xx/ or /xx-xxx/ with the correct code for the target language
+      let targetLang =
         (this.translationService &&
           this.translationService.settings &&
           this.translationService.settings.targetLanguage) ||
         "en";
-      const code = this.languageCodeMap[targetLang] || targetLang;
-      // Replace all occurrences in the text (including inside HTML attributes)
-      return text.replace(
-        /\/(en-us|es-es|fr-fr|de-de|it-it|pt-pt|ru-ru|ja-jp|ko-kr|zh-cn|zh-hk)\//gi,
-        `/${code}/`
-      );
+      // Defensive: treat zh-hant and zh-hk as hk
+      if (targetLang === "zh-hant" || targetLang === "zh-hk") {
+        targetLang = "hk";
+      }
+      let code = this.languageCodeMap[targetLang] || targetLang;
+      // Only allow valid xx-xx or xx-xxx codes
+      if (!/^[a-z]{2}-[a-z]{2,3}$/i.test(code)) {
+        code = "en-us";
+      }
+      // Replace all occurrences of /xx-xx/ or /xx-xxx/ in the text
+      return text.replace(/\/[a-z]{2}-[a-z]{2,3}\//gi, `/${code}/`);
     }
 
     setRichTextWithFormatting(element, translatedText) {
@@ -785,6 +1100,45 @@
         element.textContent = translatedText;
       }
     }
+
+    // Helper: Remove empty headings, paragraphs, list items, and orphan trailing breaks
+    cleanupEmptyBlocks(root) {
+      if (!root || !root.querySelectorAll) return;
+      // Remove empty headings, paragraphs, list items
+      root.querySelectorAll("h1, h2, h3, h4, h5, h6, p, li").forEach((el) => {
+        if (
+          !el.textContent.trim() &&
+          (!el.querySelector("*") ||
+            el.innerHTML.trim() === "" ||
+            el.innerHTML.trim() === "<br>" ||
+            el.classList.contains("is-empty"))
+        ) {
+          el.remove();
+        }
+      });
+      // Remove empty ol/ul
+      root.querySelectorAll("ol, ul").forEach((list) => {
+        const items = Array.from(list.querySelectorAll("li"));
+        if (
+          items.length === 0 ||
+          items.every(
+            (li) =>
+              !li.textContent.trim() &&
+              (!li.querySelector("*") ||
+                li.innerHTML.trim() === "" ||
+                li.classList.contains("is-empty"))
+          )
+        ) {
+          list.remove();
+        }
+      });
+      // Remove trailing breaks if they are the only child
+      root.querySelectorAll("br.ProseMirror-trailingBreak").forEach((br) => {
+        if (br.parentElement && br.parentElement.childNodes.length === 1) {
+          br.remove();
+        }
+      });
+    }
   }
 
   class TranslationService {
@@ -794,59 +1148,80 @@
       this.service = settings.translationService;
     }
 
-    async translate(text, sourceLanguage, targetLanguage) {
+    async translate(text, sourceLanguage, targetLanguage, context) {
       switch (this.service) {
-        case "google":
-          return await this.translateWithGoogle(
+        case "openai":
+          return await this.translateWithOpenAI(
             text,
             sourceLanguage,
-            targetLanguage
+            targetLanguage,
+            context
           );
         case "deepl":
           return await this.translateWithDeepL(
             text,
             sourceLanguage,
-            targetLanguage
+            targetLanguage,
+            context
           );
         case "azure":
           return await this.translateWithAzure(
             text,
             sourceLanguage,
-            targetLanguage
+            targetLanguage,
+            context
           );
         case "deepseek":
           return await this.translateWithDeepSeek(
             text,
             sourceLanguage,
-            targetLanguage
+            targetLanguage,
+            context
           );
         default:
           throw new Error("Unsupported translation service");
       }
     }
 
-    async translateWithGoogle(text, sourceLanguage, targetLanguage) {
-      // Using Google Translate's free web interface (note: this may have limitations)
-      try {
-        const response = await fetch(
-          `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sourceLanguage}&tl=${targetLanguage}&dt=t&q=${encodeURIComponent(
-            text
-          )}`
-        );
-        const data = await response.json();
-
-        if (data && data[0] && data[0][0] && data[0][0][0]) {
-          return data[0][0][0];
-        }
-
-        throw new Error("Invalid response from Google Translate");
-      } catch (error) {
-        console.error("Google Translate error:", error);
-        throw new Error("Google Translate failed: " + error.message);
+    async translateWithOpenAI(text, sourceLanguage, targetLanguage, context) {
+      if (!this.apiKey) {
+        throw new Error("OpenAI API key is required");
       }
+      return new Promise((resolve, reject) => {
+        chrome.runtime.sendMessage(
+          {
+            action: "openaiTranslate",
+            text: text,
+            sourceLanguage: sourceLanguage,
+            targetLanguage: targetLanguage,
+            apiKey: this.apiKey,
+            context: context,
+          },
+          (response) => {
+            if (chrome.runtime.lastError) {
+              reject(
+                new Error(
+                  "OpenAI translation failed: " +
+                    chrome.runtime.lastError.message
+                )
+              );
+            } else if (response && response.success) {
+              resolve(response.text);
+            } else {
+              reject(
+                new Error(
+                  response && response.error
+                    ? response.error
+                    : "Unknown OpenAI error"
+                )
+              );
+            }
+          }
+        );
+      });
     }
 
-    async translateWithDeepL(text, sourceLanguage, targetLanguage) {
+    async translateWithDeepL(text, sourceLanguage, targetLanguage, context) {
       if (!this.apiKey) {
         throw new Error("DeepL API key is required");
       }
@@ -858,6 +1233,7 @@
             sourceLanguage: sourceLanguage,
             targetLanguage: targetLanguage,
             apiKey: this.apiKey,
+            context: context,
           },
           (response) => {
             if (chrome.runtime.lastError) {
@@ -883,7 +1259,7 @@
       });
     }
 
-    async translateWithAzure(text, sourceLanguage, targetLanguage) {
+    async translateWithAzure(text, sourceLanguage, targetLanguage, context) {
       if (!this.apiKey) {
         throw new Error("Azure Translator API key is required");
       }
@@ -923,7 +1299,7 @@
       }
     }
 
-    async translateWithDeepSeek(text, sourceLanguage, targetLanguage) {
+    async translateWithDeepSeek(text, sourceLanguage, targetLanguage, context) {
       if (!this.apiKey) {
         throw new Error("DeepSeek API key is required");
       }
@@ -935,6 +1311,7 @@
             sourceLanguage: sourceLanguage,
             targetLanguage: targetLanguage,
             apiKey: this.apiKey,
+            context: context,
           },
           (response) => {
             if (chrome.runtime.lastError) {

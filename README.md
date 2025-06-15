@@ -4,20 +4,27 @@ A Chrome extension that allows you to translate Prismic document fields directly
 
 ## Features
 
-- **One-click translation** of all text fields in Prismic documents
-- **Multiple translation services** supported:
-  - Google Translate (Free)
-  - DeepL API
-  - Azure Translator
-- **Smart field detection** for different Prismic field types
-- **Preview mode** to see which fields will be translated
-- **Customizable options**:
-  - Translate rich text fields
-  - Translate title fields
-  - Translate image alt text
-  - Preserve text formatting
-- **Visual feedback** with field highlighting
-- **Settings persistence** across browser sessions
+- **One-click translation** of all Prismic fields: text, rich text, alt text, titles, and more
+- **Multiple translation services**: OpenAI API, DeepSeek API (UI only shows these now)
+- **Per-service API key management**: API keys are stored per service and never shared
+- **Customizable translation context**: Add custom instructions/context in the popup
+- **HTML and formatting preservation**: All tags (<strong>, <em>, <a>, etc.) and links are preserved
+- **i18n prefix replacement**: All URLs and text fields update i18n prefixes (e.g., /en-us/ → /zh-hk/)
+- **Context menu translation**: Right-click selected text to translate (preserves HTML, links, formatting)
+- **Skips technical/ID fields**: UID, YouTube, slug, guid, etc. are never translated
+- **Skips fields labeled exactly 'name'**
+- **Skips empty, numeric, email, and code-like fields**
+- **Detects and translates image alt text**: Including in repeating groups and with accessibility placeholders
+- **Lazy-loads all fields**: Scrolls slowly to ensure all fields are detected
+- **Progress bar and per-field status**: Real-time feedback in the popup
+- **Cancel button**: Abort translation at any time
+- **Flags in language dropdowns**: For both source and target languages
+- **Keyboard shortcut**: Ctrl+Shift+X (Windows/Linux) or Cmd+Shift+X (Mac) to open the popup
+- **Focus on Translate button**: Hit Enter to start translation immediately
+- **API key box always visible**: No need to toggle model to see it
+- **Storage migration and robust handling of legacy values**
+- **Minimal permissions, privacy, and local-only API key storage**
+- ...and more (see code for full details)
 
 ## Installation
 
@@ -75,7 +82,7 @@ The extension automatically detects and translates:
 - **Text fields** - Simple text inputs and textareas
 - **Title fields** - Document titles and headings (rich text)
 - **Rich text fields** - TipTap/ProseMirror formatted content with **preserved formatting**
-- **Alt text fields** - Image alternative text descriptions
+- **Alt text fields** - Image alternative text descriptions (including in groups)
 - **Description fields** - Multi-line content descriptions
 
 ### Smart Field Detection
@@ -90,6 +97,9 @@ The extension intelligently **skips** fields that shouldn't be translated:
 - Tag fields
 - Very short content (< 3 characters)
 - Code-like content and IDs
+- Fields labeled exactly 'name'
+
+**Note:** If a rich text field contains inline images or video embeds, it will be skipped during full document translation. To translate these fields, use the context menu translation (right-click the field and select "Translate Selected").
 
 ## Settings
 
