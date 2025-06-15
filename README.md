@@ -26,6 +26,14 @@ A Chrome extension that allows you to translate Prismic document fields directly
 - **Minimal permissions, privacy, and local-only API key storage**
 - ...and more (see code for full details)
 
+## Screenshots
+
+<p align="center">
+  <img src="screenshots/translator.jpg" alt="Translator Popup" width="300"/>
+  <img src="screenshots/inline.jpeg" alt="Inline Translation" width="300"/>
+  <img src="screenshots/context.jpeg" alt="Context Menu Translation" width="300"/>
+</p>
+
 ## Installation
 
 ### From Source (Development)
@@ -157,7 +165,6 @@ translator/
 ├── popup.js              # Popup logic
 ├── content.js            # Content script for Prismic pages
 ├── background.js         # Background service worker
-├── test.html             # Test page for development
 ├── icons/                # Extension icons
 ├── install.md            # Quick installation guide
 └── README.md            # This file
@@ -168,14 +175,12 @@ translator/
 1. Clone the repository
 2. No build process required - it's vanilla JavaScript
 3. Load the extension in Chrome developer mode
-4. Test on Prismic documents or use `test.html` for development
+4. Test on Prismic documents for development
 
 ### Testing
 
-- Open `test.html` in your browser to test field detection
-- The test page simulates real Prismic field structures
-- Use browser developer tools to debug field selection
-- Check console logs for translation progress
+Use browser developer tools to debug field selection
+Check console logs for translation progress
 
 ### Contributing
 
@@ -184,26 +189,6 @@ translator/
 3. Make your changes
 4. Test thoroughly with different Prismic document types
 5. Submit a pull request
-
-## API Rate Limits
-
-### Google Translate (Free)
-
-- No official limits but may be rate-limited
-- Best for testing and light usage
-- No API key required
-
-### DeepL API
-
-- Free tier: 500,000 characters/month
-- Pro plans available for higher usage
-- Excellent translation quality
-
-### Azure Translator
-
-- Free tier: 2M characters/month
-- Pay-as-you-go pricing available
-- Enterprise features and reliability
 
 ## Changelog
 
@@ -223,9 +208,8 @@ MIT License - see LICENSE file for details
 ## Support
 
 - **GitHub Issues**: Report bugs and request features
-- **Email**: [Your email for support]
 - **Documentation**: Check this README for common issues
 
 ## Disclaimer
 
-This extension is not officially affiliated with Prismic. It's a third-party tool designed to enhance the Prismic editing experience.
+This extension is NOT officially affiliated with Prismic. It's a third-party tool designed to enhance the Prismic editing experience.
