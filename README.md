@@ -32,19 +32,19 @@ A Chrome extension that allows you to translate Prismic document fields directly
   <img src="screenshots/translator.jpg" alt="Translator Popup" width="100%"/>
 </p>
 <p align="center"><em>Prismic Translator popup</em></p>
-<p style="margin-bottom: 1em; color:##0D1117;">.</p>
+<p style="margin-bottom: 1em; color:#0D1117;">.</p>
 
 <p align="center">
   <img src="screenshots/inline.jpeg" alt="Inline Translation" width="100%"/>
 </p>
 <p align="center"><em>Context menu translation</em></p>
-<p style="margin-bottom: 1em; color:##0D1117;">.</p>
+<p style="margin-bottom: 1em; color:#0D1117;">.</p>
 
 <p align="center">
   <img src="screenshots/context.jpeg" alt="Context Menu Translation" width="100%"/>
 </p>
 <p align="center"><em>Provide your own context</em></p>
-<p style="margin-bottom: 1em; color:##0D1117;">.</p>
+<p style="margin-bottom: 1em; color:#0D1117;">.</p>
 
 ## Installation
 
