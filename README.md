@@ -29,10 +29,19 @@ A Chrome extension that allows you to translate Prismic document fields directly
 ## Screenshots
 
 <p align="center">
-  <img src="screenshots/translator.jpg" alt="Translator Popup" width="300"/>
-  <img src="screenshots/inline.jpeg" alt="Inline Translation" width="300"/>
-  <img src="screenshots/context.jpeg" alt="Context Menu Translation" width="300"/>
+  <img src="screenshots/translator.jpg" alt="Translator Popup" width="100%"/>
 </p>
+<p align="center"><em>Prismic Translator popup</em></p>
+
+<p align="center">
+  <img src="screenshots/inline.jpeg" alt="Inline Translation" width="100%"/>
+</p>
+<p align="center"><em>Context menu translation</em></p>
+
+<p align="center">
+  <img src="screenshots/context.jpeg" alt="Context Menu Translation" width="100%"/>
+</p>
+<p align="center"><em>Provide your own context</em></p>
 
 ## Installation
 
@@ -43,10 +52,6 @@ A Chrome extension that allows you to translate Prismic document fields directly
 3. Enable "Developer mode" in the top right corner
 4. Click "Load unpacked" and select the extension directory
 5. The extension icon should appear in your Chrome toolbar
-
-### From Chrome Web Store
-
-_Coming soon - extension will be published to the Chrome Web Store_
 
 ## Usage
 
@@ -60,28 +65,21 @@ _Coming soon - extension will be published to the Chrome Web Store_
 4. **Preview (optional)**: Click "Preview Changes" to see which fields will be translated
 5. **Translate**: Click "Translate Document" to translate all fields
 
-## Translation Services
+## Supported Models
 
-### Google Translate (Free)
+### OpenAI
 
-- No API key required
-- Uses Google's free translation service
-- May have rate limits and reliability issues
-- Best for testing and light usage
+- Uses OpenAI's GPT models for high-quality translation
+- Requires an OpenAI API key
+- Supports a wide range of languages and advanced translation features
+- Sign up and get your API key at: https://platform.openai.com/
 
-### DeepL API
+### DeepSeek
 
-- Requires DeepL API key (free tier available)
-- High-quality translations
-- 500,000 characters/month free tier
-- Sign up at: https://www.deepl.com/pro-api
-
-### Azure Translator
-
-- Requires Azure Translator API key
-- Enterprise-grade translation service
-- 2M characters/month free tier
-- Sign up at: https://azure.microsoft.com/services/cognitive-services/translator/
+- Uses DeepSeek's translation models for fast and accurate results
+- Requires a DeepSeek API key
+- Supports multiple languages
+- Sign up and get your API key at: https://platform.deepseek.com/
 
 ## Supported Field Types
 
@@ -107,7 +105,7 @@ The extension intelligently **skips** fields that shouldn't be translated:
 - Code-like content and IDs
 - Fields labeled exactly 'name'
 
-**Note:** If a rich text field contains inline images or video embeds, it will be skipped during full document translation. To translate these fields, use the context menu translation (right-click the field and select "Translate Selected").
+**Note:** If a rich text field contains inline images or video embeds, it will be skipped during full document translation. These introduce a bit of complexity and I couldn't be bothered to figure it out. To translate these fields, use the context menu translation (right-click the field and select "Translate Selected").
 
 ## Settings
 
